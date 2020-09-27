@@ -23,13 +23,13 @@ def load_data(image_size):
         root_dir + 'train2019.json',
         root_dir,
         train_transform,
-        category_filter='Birds'
+        # category_filter='Birds'
     )
     test_set = InaturalistDataset(
         root_dir + 'val2019.json',
         root_dir,
         test_transform,
-        category_filter='Birds'
+        # category_filter='Birds'
     )
 
     train_size = int(len(train_val_set) * 0.75)
@@ -50,18 +50,22 @@ def load_data(image_size):
 def load_net():
     device = 'cuda' if torch.cuda.is_available() else 'cpu'
 
-    net = models.resnet50(pretrained=True)
+    net = models.resnet18(pretrained=True)
 
-    for i, child in enumerate(net.children()):
-        if True:
-            for param in child.parameters():
-                param.requires_grad = False
+    # for i, child in enumerate(net.children()):
+    #     if i < 8:
+    #         for param in child.parameters():
+    #             param.requires_grad = False
+
+    for i, param in enumerate(net.parameters()):
+        if i < 55:
+            param.requires_grad = False
 
     net.fc = nn.Sequential(
         nn.Linear(net.fc.in_features, 1024),
         nn.ReLU(),
         nn.Dropout(0.5),
-        nn.Linear(1024, 126)
+        nn.Linear(1024, 1010)
     )
 
     net = net.to(device)
@@ -70,7 +74,7 @@ def load_net():
 
 
 if __name__ == '__main__':
-    image_size = 224
+    image_size = 80
 
     train_loader, val_loader, test_loader = load_data(image_size)
 
