@@ -6,35 +6,35 @@ from collections import OrderedDict
 
 
 class EarlyStopping:
-    def __init__(self, patience, moniter):
-        self._patience = patience
+    def __init__(self, patience=0, moniter='val_loss', min_delta=0):
         self.moniter = moniter
+        self.early_stop = False
+
+        self._patience = patience
+        self._min_delta = min_delta
+
         self._counter = 0
         self._best_score = None
-        self.early_stop = False
+
+        if 'loss' in self.moniter:
+            self._min_delta *= -1
+            self._moniter_operation = np.less
+        elif 'accuracy' in self.moniter:
+            self._min_delta *= 1
+            self._moniter_operation = np.greater
 
     def __call__(self, score):
         if self._best_score == None:
             self._best_score = score
 
-        if 'loss' in self.moniter:
-            if score > self._best_score:
-                self._counter += 1
+        if self._moniter_operation(score - self._min_delta, self._best_score):
+            self._best_score = score
+            self._counter = 0
+        else:
+            self._counter += 1
 
-                if self._counter >= self._patience:
-                    self.early_stop = True
-            else:
-                self._best_score = score
-                self._counter = 0
-        elif 'accuracy' in self.moniter:
-            if score < self._best_score:
-                self._counter += 1
-
-                if self._counter >= self._patience:
-                    self.early_stop = True
-            else:
-                self._best_score = score
-                self._counter = 0
+            if self._counter >= self._patience:
+                self.early_stop = True
 
 
 class Model:
