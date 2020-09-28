@@ -1,0 +1,7 @@
+# allow classes
+
+allow: [
+    0, 1, 2,
+    ...
+]
+
