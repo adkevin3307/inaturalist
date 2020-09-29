@@ -1,5 +1,7 @@
 import yaml
+import copy
 import argparse
+import numpy as np
 
 import torch
 import torch.nn as nn
@@ -38,10 +40,20 @@ def load_data(image_size, category_filter, train_test_split):
         category_filter=category_filter
     )
 
-    train_size = int(len(train_test_set) * train_test_split)
-    test_size = len(train_test_set) - train_size
+    if isinstance(train_test_split, float):
+        train_size = int(len(train_test_set) * train_test_split)
+        test_size = len(train_test_set) - train_size
 
-    train_set, test_set = torch.utils.data.random_split(train_test_set, [train_size, test_size])
+        train_set, test_set = torch.utils.data.random_split(train_test_set, [train_size, test_size])
+    elif isinstance(train_test_split, int):
+        test_indices = train_test_set.sample(train_test_split)
+
+        train_indices = list(set(range(len(train_test_set))) - set(test_indices))
+        train_indices = np.random.permutation(train_indices)
+
+        train_set = torch.utils.data.Subset(train_test_set, train_indices[: 500])
+        test_set = torch.utils.data.Subset(train_test_set, test_indices)
+
     test_set.__getattribute__('dataset').__setattr__('transform', test_transform)
 
     print(f'train: {len(train_set)}, val: {len(val_set)}, test: {len(test_set)}')
@@ -92,12 +104,28 @@ def update_net(net, output_classes, model_name):
     return net
 
 
+def run(net, category_filter, train_test_split, patience, moniter):
+    output_classes = len(category_filter)
+    train_loader, val_loader, test_loader = load_data(image_size, category_filter, train_test_split)
+
+    optimizer = torch.optim.Adam(net.parameters(), lr=0.0005, weight_decay=1e-4)
+    scheduler = torch.optim.lr_scheduler.StepLR(optimizer, step_size=4, gamma=0.1)
+    criterion = nn.CrossEntropyLoss()
+    early_stopping = EarlyStopping(patience=patience, moniter=moniter)
+
+    model = Model(net, optimizer, criterion)
+    # model.summary((1, 3) + image_size)
+
+    train_history = model.train(train_loader, 30, val_loader=val_loader, scheduler=scheduler, early_stopping=early_stopping)
+    test_history = model.test(test_loader)
+
+    return (train_history, test_history)
+
+
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
     parser.add_argument('-m', '--model', dest='model_name', type=str, default='resnet')
     args = parser.parse_args()
-
-    torch.manual_seed(0)
 
     image_size = (240, 240)
     model_name = args.model_name
@@ -105,36 +133,18 @@ if __name__ == '__main__':
     with open('config.yaml', 'r') as config_file:
         config = yaml.load(config_file, Loader=yaml.FullLoader)
 
-    output_classes = len(config['allow']['train'])
-    train_loader, val_loader, test_loader = load_data(image_size, config['allow']['train'], 0.75)
+    net = load_net(len(config['allow']['train']), model_name)
 
-    net = load_net(output_classes, model_name)
+    train_history, test_history = run(net, config['allow']['train'], train_test_split=0.75, patience=7, moniter='val_loss')
 
-    optimizer = torch.optim.Adam(net.parameters(), lr=0.0005, weight_decay=1e-4)
-    scheduler = torch.optim.lr_scheduler.StepLR(optimizer, step_size=4, gamma=0.1)
-    criterion = nn.CrossEntropyLoss()
-    early_stopping = EarlyStopping(patience=7, moniter='val_loss')
+    loss_result = 0
+    accuracy_result = 0
+    for category_filter in config['allow']['test']:
+        net_copy = update_net(copy.deepcopy(net), len(category_filter), model_name)
 
-    model = Model(net, optimizer, criterion)
-    # model.summary((1, 3) + image_size)
+        train_history, test_history = run(net_copy, category_filter, train_test_split=10, patience=4, moniter='loss')
 
-    model.train(train_loader, 30, val_loader=val_loader, scheduler=scheduler, early_stopping=early_stopping)
-    model.test(test_loader)
+        loss_result += test_history['loss']
+        accuracy_result += test_history['accuracy']
 
-    print('-' * 50)
-
-    output_classes = len(config['allow']['test'])
-    train_loader, val_loader, test_loader = load_data(image_size, config['allow']['test'], 0.9)
-
-    net = update_net(net, output_classes, model_name)
-
-    optimizer = torch.optim.Adam(net.parameters(), lr=0.0005, weight_decay=1e-4)
-    scheduler = torch.optim.lr_scheduler.StepLR(optimizer, step_size=4, gamma=0.1)
-    criterion = nn.CrossEntropyLoss()
-    early_stopping = EarlyStopping(patience=7, moniter='loss')
-
-    model = Model(net, optimizer, criterion)
-    # model.summary((1, 3) + image_size)
-
-    model.train(train_loader, 30, val_loader=val_loader, scheduler=scheduler, early_stopping=early_stopping)
-    model.test(test_loader)
+    print(f'average loss: {loss_result / len(config["allow"]["test"])}, average accuracy: {accuracy_result / len(config["allow"]["test"])}')

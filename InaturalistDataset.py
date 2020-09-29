@@ -2,6 +2,7 @@ import torch
 
 import os
 import json
+import random
 import pandas as pd
 from PIL import Image
 
@@ -21,6 +22,8 @@ class InaturalistDataset(torch.utils.data.Dataset):
             self.label_file_df = self.label_file_df[self.label_file_df['category_id'].isin(category_filter)]
         elif isinstance(category_filter, str):
             self.label_file_df = self.label_file_df[self.label_file_df['file_name'].str.contains(category_filter)]
+
+        self.label_file_df = self.label_file_df.reset_index().drop('index', axis=1)
 
         for i, category in enumerate(sorted(set(self.label_file_df['category_id']))):
             self.label_file_df['category_id'] = self.label_file_df['category_id'].apply(lambda x: i if x == category else x)
@@ -42,5 +45,13 @@ class InaturalistDataset(torch.utils.data.Dataset):
 
         return image, label
 
-    def targets(self):
+    def targets(self) -> int:
         return self.label_file_df['category_id'].nunique()
+
+    def sample(self, num_per_class) -> list:
+        indices = []
+
+        for i in range(self.targets()):
+            indices.extend(random.sample(list(self.label_file_df[self.label_file_df['category_id'] == i].index), k=num_per_class))
+        
+        return indices
