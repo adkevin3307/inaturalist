@@ -2,6 +2,7 @@ import yaml
 import copy
 import argparse
 import numpy as np
+from sklearn.metrics import classification_report
 
 import torch
 import torch.nn as nn
@@ -116,10 +117,19 @@ def run(net, category_filter, train_test_split, patience, moniter):
     model = Model(net, optimizer, criterion)
     # model.summary((1, 3) + image_size)
 
-    train_history = model.train(train_loader, 30, val_loader=val_loader, scheduler=scheduler, early_stopping=early_stopping)
-    test_history = model.test(test_loader)
+    model.train(train_loader, 30, val_loader=val_loader, scheduler=scheduler, early_stopping=early_stopping)
+    model.test(test_loader)
 
-    return (train_history, test_history)
+    x_test, y_test = [], []
+
+    if len(test_loader.dataset) < 100:
+        for image, label in test_loader.dataset:
+            x_test.append(image.numpy())
+            y_test.append(label)
+
+        y_hat = model.predict_class(x_test)
+
+        return (y_test, y_hat)
 
 
 if __name__ == '__main__':
@@ -135,16 +145,11 @@ if __name__ == '__main__':
 
     net = load_net(len(config['allow']['train']), model_name)
 
-    train_history, test_history = run(net, config['allow']['train'], train_test_split=0.75, patience=7, moniter='val_loss')
+    run(net, config['allow']['train'], train_test_split=0.75, patience=7, moniter='val_loss')
 
-    loss_result = 0
-    accuracy_result = 0
     for category_filter in config['allow']['test']:
         net_copy = update_net(copy.deepcopy(net), len(category_filter), model_name)
 
-        train_history, test_history = run(net_copy, category_filter, train_test_split=10, patience=4, moniter='loss')
+        y_test, y_hat = run(net_copy, category_filter, train_test_split=10, patience=4, moniter='loss')
 
-        loss_result += test_history['loss']
-        accuracy_result += test_history['accuracy']
-
-    print(f'average loss: {loss_result / len(config["allow"]["test"])}, average accuracy: {accuracy_result / len(config["allow"]["test"])}')
+        print(classification_report(y_test, y_hat))

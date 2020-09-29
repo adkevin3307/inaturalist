@@ -2,7 +2,7 @@ import torch
 import torch.nn as nn
 
 import numpy as np
-from collections import OrderedDict, defaultdict
+from collections import OrderedDict
 
 
 class EarlyStopping:
@@ -112,11 +112,8 @@ class Model:
 
         history = {}
 
-        correct = 0
         loss = 0.0
-
-        class_total = defaultdict(int)
-        class_correct = defaultdict(int)
+        correct = 0
 
         with torch.no_grad():
             for i, (x_test, y_test) in enumerate(test_loader):
@@ -130,12 +127,6 @@ class Model:
                 loss += temp_loss
 
                 if verbose:
-                    temp = (y_hat == y_test).squeeze()
-                    for j in range(len(y_test)):
-                        label = y_test[j].item()
-                        class_total[label] += 1
-                        class_correct[label] += temp[j].item()
-
                     current_progress = (i + 1) / len(test_loader) * 100
                     progress_bar = '=' * int((i + 1) * (20 / len(test_loader)))
                     print(f'\rTest: [{progress_bar:<20}] {current_progress:6.2f}%, loss: {temp_loss:.3f}', end='')
@@ -151,11 +142,26 @@ class Model:
             print(f'\rTest: [{"=" * 20}], ', end='')
         print(f'{prefix}_loss: {loss:>.3f}, {prefix}_accuracy: {accuracy:.3f}')
 
-        max_key_length = len(str(len(class_total.keys()) - 1))
-        for key in sorted(class_total.keys()):
-            print(f'class {key:>{max_key_length}}: {class_correct[key]:>3} / {class_total[key]:>3} = {((class_correct[key] * 100.0) / class_total[key]):.2f}%')
-
         return history
+
+    def predict(self, x):
+        self.net.eval()
+
+        x = torch.Tensor(x).to(self.device)
+
+        output = self.net(x)
+
+        return output.tolist()
+
+    def predict_class(self, x):
+        self.net.eval()
+
+        x = torch.Tensor(x).to(self.device)
+
+        output = self.net(x)
+        _, y_hat = output.max(dim=1)
+
+        return y_hat.tolist()
 
     def summary(self, input_shape):
         hooks = []
