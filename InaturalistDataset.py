@@ -17,11 +17,13 @@ class InaturalistDataset(torch.utils.data.Dataset):
             on='image_id'
         )
 
-        self.label_file_df = self.label_file_df[self.label_file_df['file_name'].str.contains(category_filter)]
+        if isinstance(category_filter, list):
+            self.label_file_df = self.label_file_df[self.label_file_df['category_id'].isin(category_filter)]
+        elif isinstance(category_filter, str):
+            self.label_file_df = self.label_file_df[self.label_file_df['file_name'].str.contains(category_filter)]
 
-        if len(self.label_file_df['category_id'].unique()) != 1100:
-            for i, category in enumerate(sorted(set(self.label_file_df['category_id']))):
-                self.label_file_df['category_id'] = self.label_file_df['category_id'].apply(lambda x: i if x == category else x)
+        for i, category in enumerate(sorted(set(self.label_file_df['category_id']))):
+            self.label_file_df['category_id'] = self.label_file_df['category_id'].apply(lambda x: i if x == category else x)
 
         self.root_dir = root_dir
         self.transform = transform
@@ -39,3 +41,6 @@ class InaturalistDataset(torch.utils.data.Dataset):
             image = self.transform(image)
 
         return image, label
+
+    def targets(self):
+        return self.label_file_df['category_id'].nunique()

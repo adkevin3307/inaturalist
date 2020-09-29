@@ -1,42 +1,48 @@
+import yaml
+import argparse
+
 import torch
 import torch.nn as nn
 from torchvision import models, transforms
 
 from Model import Model, EarlyStopping
+from autoaugment import ImageNetPolicy
+from efficientnet_pytorch import EfficientNet
 from InaturalistDataset import InaturalistDataset
 
 
-def load_data(image_size):
+def load_data(image_size, category_filter, train_test_split):
     train_transform = transforms.Compose([
+        transforms.Resize(image_size),
         transforms.RandomHorizontalFlip(),
-        transforms.RandomAffine(0, translate=(0.3, 0.3), scale=(1.0, 1.5)),
-        transforms.Resize((image_size, image_size)),
+        transforms.RandomAffine(30, translate=(0.3, 0.3), scale=(1.0, 1.5)),
+        ImageNetPolicy(),
         transforms.ToTensor()
     ])
     test_transform = transforms.Compose([
-        transforms.Resize((image_size, image_size)),
+        transforms.Resize(image_size),
         transforms.ToTensor()
     ])
 
     root_dir = '/train-data/inaturalist-2019/'
-    train_val_set = InaturalistDataset(
+    train_test_set = InaturalistDataset(
         root_dir + 'train2019.json',
         root_dir,
         train_transform,
-        # category_filter='Birds'
+        category_filter=category_filter
     )
-    test_set = InaturalistDataset(
+    val_set = InaturalistDataset(
         root_dir + 'val2019.json',
         root_dir,
         test_transform,
-        # category_filter='Birds'
+        category_filter=category_filter
     )
 
-    train_size = int(len(train_val_set) * 0.75)
-    val_size = len(train_val_set) - train_size
+    train_size = int(len(train_test_set) * train_test_split)
+    test_size = len(train_test_set) - train_size
 
-    train_set, val_set = torch.utils.data.random_split(train_val_set, [train_size, val_size])
-    val_set.__getattribute__('dataset').__setattr__('transform', test_transform)
+    train_set, test_set = torch.utils.data.random_split(train_test_set, [train_size, test_size])
+    test_set.__getattribute__('dataset').__setattr__('transform', test_transform)
 
     print(f'train: {len(train_set)}, val: {len(val_set)}, test: {len(test_set)}')
 
@@ -47,26 +53,39 @@ def load_data(image_size):
     return (train_loader, val_loader, test_loader)
 
 
-def load_net():
+def load_net(output_classes, model_name):
     device = 'cuda' if torch.cuda.is_available() else 'cpu'
 
-    net = models.resnet18(pretrained=True)
+    if model_name == 'resnet':
+        net = models.resnet18(pretrained=True)
+        net.fc = nn.Sequential(
+            nn.Linear(net.fc.in_features, 512),
+            nn.ReLU(),
+            nn.Dropout(0.5),
+            nn.Linear(512, output_classes)
+        )
+    elif model_name == 'efficientnet':
+        net = EfficientNet.from_pretrained('efficientnet-b0')
+        net._fc = nn.Linear(net._fc.in_features, output_classes)
 
-    # for i, child in enumerate(net.children()):
-    #     if i < 8:
-    #         for param in child.parameters():
-    #             param.requires_grad = False
+    for param in list(net.parameters())[: -15]:
+        param.requires_grad = False
 
-    for i, param in enumerate(net.parameters()):
-        if i < 55:
-            param.requires_grad = False
+    net = net.to(device)
 
-    net.fc = nn.Sequential(
-        nn.Linear(net.fc.in_features, 1024),
-        nn.ReLU(),
-        nn.Dropout(0.5),
-        nn.Linear(1024, 1010)
-    )
+    return net
+
+
+def update_net(net, output_classes, model_name):
+    device = 'cuda' if torch.cuda.is_available() else 'cpu'
+
+    if model_name == 'resnet':
+        net.fc[-1] = nn.Linear(net.fc[-1].in_features, output_classes)
+    elif model_name == 'efficientnet':
+        net._fc = nn.Linear(net._fc.in_features, output_classes)
+
+    for param in net.parameters():
+        param.requires_grad = True
 
     net = net.to(device)
 
@@ -74,18 +93,48 @@ def load_net():
 
 
 if __name__ == '__main__':
-    image_size = 80
+    parser = argparse.ArgumentParser()
+    parser.add_argument('-m', '--model', dest='model_name', type=str, default='resnet')
+    args = parser.parse_args()
 
-    train_loader, val_loader, test_loader = load_data(image_size)
+    torch.manual_seed(0)
 
-    net = load_net()
+    image_size = (240, 240)
+    model_name = args.model_name
 
-    optimizer = torch.optim.Adam(net.parameters(), lr=0.0001, weight_decay=1e-6)
+    with open('config.yaml', 'r') as config_file:
+        config = yaml.load(config_file, Loader=yaml.FullLoader)
+
+    output_classes = len(config['allow']['train'])
+    train_loader, val_loader, test_loader = load_data(image_size, config['allow']['train'], 0.75)
+
+    net = load_net(output_classes, model_name)
+
+    optimizer = torch.optim.Adam(net.parameters(), lr=0.0005, weight_decay=1e-4)
+    scheduler = torch.optim.lr_scheduler.StepLR(optimizer, step_size=4, gamma=0.1)
     criterion = nn.CrossEntropyLoss()
     early_stopping = EarlyStopping(patience=7, moniter='val_loss')
 
     model = Model(net, optimizer, criterion)
-    model.summary((1, 3, image_size, image_size))
+    # model.summary((1, 3) + image_size)
 
-    model.train(train_loader, 50, val_loader=val_loader, early_stopping=early_stopping)
+    model.train(train_loader, 30, val_loader=val_loader, scheduler=scheduler, early_stopping=early_stopping)
+    model.test(test_loader)
+
+    print('-' * 50)
+
+    output_classes = len(config['allow']['test'])
+    train_loader, val_loader, test_loader = load_data(image_size, config['allow']['test'], 0.9)
+
+    net = update_net(net, output_classes, model_name)
+
+    optimizer = torch.optim.Adam(net.parameters(), lr=0.0005, weight_decay=1e-4)
+    scheduler = torch.optim.lr_scheduler.StepLR(optimizer, step_size=4, gamma=0.1)
+    criterion = nn.CrossEntropyLoss()
+    early_stopping = EarlyStopping(patience=7, moniter='loss')
+
+    model = Model(net, optimizer, criterion)
+    # model.summary((1, 3) + image_size)
+
+    model.train(train_loader, 30, val_loader=val_loader, scheduler=scheduler, early_stopping=early_stopping)
     model.test(test_loader)

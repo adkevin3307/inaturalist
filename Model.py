@@ -2,7 +2,7 @@ import torch
 import torch.nn as nn
 
 import numpy as np
-from collections import OrderedDict
+from collections import OrderedDict, defaultdict
 
 
 class EarlyStopping:
@@ -114,6 +114,10 @@ class Model:
 
         correct = 0
         loss = 0.0
+
+        class_total = defaultdict(int)
+        class_correct = defaultdict(int)
+
         with torch.no_grad():
             for i, (x_test, y_test) in enumerate(test_loader):
                 x_test, y_test = x_test.to(self.device), y_test.to(self.device)
@@ -126,6 +130,12 @@ class Model:
                 loss += temp_loss
 
                 if verbose:
+                    temp = (y_hat == y_test).squeeze()
+                    for j in range(len(y_test)):
+                        label = y_test[j].item()
+                        class_total[label] += 1
+                        class_correct[label] += temp[j].item()
+
                     current_progress = (i + 1) / len(test_loader) * 100
                     progress_bar = '=' * int((i + 1) * (20 / len(test_loader)))
                     print(f'\rTest: [{progress_bar:<20}] {current_progress:6.2f}%, loss: {temp_loss:.3f}', end='')
@@ -136,10 +146,14 @@ class Model:
         history['loss'] = loss
         history['accuracy'] = accuracy
 
-        prefix = 'test' if is_test == True else 'val'
+        prefix = 'test' if is_test else 'val'
         if verbose:
             print(f'\rTest: [{"=" * 20}], ', end='')
         print(f'{prefix}_loss: {loss:>.3f}, {prefix}_accuracy: {accuracy:.3f}')
+
+        max_key_length = len(str(len(class_total.keys()) - 1))
+        for key in sorted(class_total.keys()):
+            print(f'class {key:>{max_key_length}}: {class_correct[key]:>3} / {class_total[key]:>3} = {((class_correct[key] * 100.0) / class_total[key]):.2f}%')
 
         return history
 
@@ -179,21 +193,23 @@ class Model:
         for i in hooks:
             i.remove()
 
-        print('-' * 90)
-        print(f'{"Layer":>25}{"Input Shape":>25}{"Output Shape":>25}{"Parameters":>15}')
-        print('=' * 90)
+        max_key_length = max(map(len, summary_dict.keys())) + 1
+
+        print('-' * (65 + max_key_length))
+        print(f'{"Layer":>{max_key_length}}{"Input Shape":>25}{"Output Shape":>25}{"Parameters":>15}')
+        print('=' * (65 + max_key_length))
 
         train_parameters = 0
         total_parameters = 0
         for key, value in summary_dict.items():
-            print(f'{key:>25}{str(value["input_shape"]):>25}{str(value["output_shape"]):>25}{value["train_parameters"]:>15}')
+            print(f'{key:>{max_key_length}}{str(value["input_shape"]):>25}{str(value["output_shape"]):>25}{value["train_parameters"]:>15}')
 
             train_parameters += value['train_parameters']
             total_parameters += value['total_parameters']
 
-        print('=' * 90)
+        print('=' * (65 + max_key_length))
         print(f'Train Parameters: {train_parameters}, Total Parameters: {total_parameters}')
-        print('-' * 90)
+        print('-' * (65 + max_key_length))
 
     def export(self, filename, input_shape):
         input_data = torch.randn(input_shape).to(self.device)
