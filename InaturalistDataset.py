@@ -3,6 +3,7 @@ import torch
 import os
 import json
 import random
+import numpy as np
 import pandas as pd
 from PIL import Image
 
@@ -25,8 +26,14 @@ class InaturalistDataset(torch.utils.data.Dataset):
 
         self.label_file_df = self.label_file_df.reset_index().drop('index', axis=1)
 
-        for i, category in enumerate(sorted(set(self.label_file_df['category_id']))):
-            self.label_file_df['category_id'] = self.label_file_df['category_id'].apply(lambda x: i if x == category else x)
+        self.category_map = {}
+        for i, category in enumerate(sorted(self.label_file_df['category_id'].unique())):
+            self.category_map[category] = i
+
+        self.invert_category_map = {value: key for key, value in self.category_map.items()}
+
+        for key, value in self.category_map.items():
+            self.label_file_df['category_id'] = self.label_file_df['category_id'].apply(lambda x: value if x == key else x)
 
         self.root_dir = root_dir
         self.transform = transform
@@ -48,10 +55,19 @@ class InaturalistDataset(torch.utils.data.Dataset):
     def targets(self) -> int:
         return self.label_file_df['category_id'].nunique()
 
-    def sample(self, num_per_class) -> list:
-        indices = []
+    def sample(self, weights) -> list:
+        indices = [[], []]
 
-        for i in range(self.targets()):
-            indices.extend(random.sample(list(self.label_file_df[self.label_file_df['category_id'] == i].index), k=num_per_class))
-        
+        for key, value in weights.items():
+            category = self.category_map[key]
+
+            temp = random.sample(list(self.label_file_df[self.label_file_df['category_id'] == category].index), k=sum(value))
+            temp = np.random.permutation(temp)
+
+            indices[0].extend(temp[: value[0]])
+            indices[1].extend(temp[value[0]: ])
+
         return indices
+    
+    def labels(self) -> dict:
+        return self.invert_category_map
