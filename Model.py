@@ -151,7 +151,7 @@ class Model:
 
         output = self.net(x)
 
-        return output.tolist()
+        return np.array(output.tolist())
 
     def predict_class(self, x):
         self.net.eval()
@@ -161,7 +161,7 @@ class Model:
         output = self.net(x)
         _, y_hat = output.max(dim=1)
 
-        return y_hat.tolist()
+        return np.array(y_hat.tolist())
 
     def summary(self, input_shape):
         hooks = []

@@ -50,9 +50,10 @@ def load_data(image_size, category_filter, train_test_split):
         test_indices = train_test_set.sample(train_test_split)
 
         train_indices = list(set(range(len(train_test_set))) - set(test_indices))
-        train_indices = np.random.permutation(train_indices)
+        # train_indices = np.random.permutation(train_indices)
 
-        train_set = torch.utils.data.Subset(train_test_set, train_indices[: 500])
+        # train_set = torch.utils.data.Subset(train_test_set, train_indices[: (100 * len(category_filter))])
+        train_set = torch.utils.data.Subset(train_test_set, train_indices)
         test_set = torch.utils.data.Subset(train_test_set, test_indices)
 
     test_set.__getattribute__('dataset').__setattr__('transform', test_transform)
@@ -66,46 +67,40 @@ def load_data(image_size, category_filter, train_test_split):
     return (train_loader, val_loader, test_loader)
 
 
-def load_net(output_classes, model_name):
+def load_net(output_classes, model_name, net=None):
     device = 'cuda' if torch.cuda.is_available() else 'cpu'
 
     if model_name == 'resnet':
-        net = models.resnet18(pretrained=True)
-        net.fc = nn.Sequential(
-            nn.Linear(net.fc.in_features, 512),
-            nn.ReLU(),
-            nn.Dropout(0.5),
-            nn.Linear(512, output_classes)
-        )
+        if net == None:
+            net = models.resnet18(pretrained=True)
+            net.fc = nn.Sequential(
+                nn.Linear(net.fc.in_features, 512),
+                nn.ReLU(),
+                nn.Dropout(0.5),
+                nn.Linear(512, output_classes)
+            )
+        else:
+            net.fc[-1] == nn.Linear(net.fc[-1].in_features, output_classes)
     elif model_name == 'efficientnet':
-        net = EfficientNet.from_pretrained('efficientnet-b0')
-        net._fc = nn.Linear(net._fc.in_features, output_classes)
+        if net == None:
+            net = EfficientNet.from_pretrained('efficientnet-b0')
+            net._fc = nn.Linear(net._fc.in_features, output_classes)
+        else:
+            net._fc = nn.Linear(net._fc.in_features, output_classes)
 
-    for param in list(net.parameters())[: -15]:
-        param.requires_grad = False
+    if net == None:
+        for param in list(net.parameters())[: -15]:
+            param.requires_grad = False
+    else:
+        for param in net.parameters():
+            param.requires_grad = True
 
     net = net.to(device)
 
     return net
 
 
-def update_net(net, output_classes, model_name):
-    device = 'cuda' if torch.cuda.is_available() else 'cpu'
-
-    if model_name == 'resnet':
-        net.fc[-1] = nn.Linear(net.fc[-1].in_features, output_classes)
-    elif model_name == 'efficientnet':
-        net._fc = nn.Linear(net._fc.in_features, output_classes)
-
-    for param in net.parameters():
-        param.requires_grad = True
-
-    net = net.to(device)
-
-    return net
-
-
-def run(net, category_filter, train_test_split, patience, moniter):
+def run(net, category_filter, train_test_split, patience, moniter, is_query=False):
     output_classes = len(category_filter)
     train_loader, val_loader, test_loader = load_data(image_size, category_filter, train_test_split)
 
@@ -118,11 +113,12 @@ def run(net, category_filter, train_test_split, patience, moniter):
     # model.summary((1, 3) + image_size)
 
     model.train(train_loader, 30, val_loader=val_loader, scheduler=scheduler, early_stopping=early_stopping)
-    model.test(test_loader)
 
-    x_test, y_test = [], []
+    if is_query == False:
+        model.test(test_loader)
+    else:
+        x_test, y_test = [], []
 
-    if len(test_loader.dataset) < 100:
         for image, label in test_loader.dataset:
             x_test.append(image.numpy())
             y_test.append(label)
@@ -147,9 +143,17 @@ if __name__ == '__main__':
 
     run(net, config['allow']['train'], train_test_split=0.75, patience=7, moniter='val_loss')
 
-    for category_filter in config['allow']['test']:
-        net_copy = update_net(copy.deepcopy(net), len(category_filter), model_name)
+    total = 0
+    correct = 0
 
-        y_test, y_hat = run(net_copy, category_filter, train_test_split=10, patience=4, moniter='loss')
+    for category_filter in config['allow']['test']:
+        net_copy = load_net(len(category_filter), model_name, net=copy.deepcopy(net))
+
+        y_test, y_hat = run(net_copy, category_filter, train_test_split=10, patience=4, moniter='loss', is_query=True)
+
+        total += len(y_test)
+        correct += (y_test == y_hat).sum()
 
         print(classification_report(y_test, y_hat))
+
+    print(f'average accuracy: {(correct / total):.3f}')
