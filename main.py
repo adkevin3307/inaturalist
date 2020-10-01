@@ -155,6 +155,7 @@ if __name__ == '__main__':
     logger.addHandler(log_file)
 
     logger.info('-' * 100)
+    logger.info(args.config_name)
 
     image_size = (240, 240)
 
@@ -164,7 +165,7 @@ if __name__ == '__main__':
     net = load_net(len(config['train']), args.model_name)
 
     model, history = run(net, config['train'], train_test_split=0.75, patience=7, moniter='val_loss')
-    model.export(f'model_{args.config_name.split(".")[0]}.onnx', ((1, 3) + image_size))
+    model.export(f'backup/model_{args.config_name.split(".")[0]}.onnx', ((1, 3) + image_size))
 
     logger.info(f'train accuracy: {(history["accuracy"]):.3f}')
 
