@@ -1,5 +1,6 @@
 import yaml
 import copy
+import logging
 import argparse
 import numpy as np
 from sklearn.metrics import classification_report
@@ -111,9 +112,9 @@ def run(net, category_filter, train_test_split, patience, moniter, is_query=Fals
     model.train(train_loader, epochs=30, val_loader=val_loader, scheduler=scheduler, early_stopping=early_stopping)
 
     if is_query == False:
-        model.test(test_loader)
+        history = model.test(test_loader)
 
-        return model
+        return (model, history)
     else:
         x_test, y_test = [], []
         labels = test_loader.dataset.dataset.labels()
@@ -134,34 +135,58 @@ def run(net, category_filter, train_test_split, patience, moniter, is_query=Fals
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
     parser.add_argument('-m', '--model', dest='model_name', type=str, default='resnet')
+    parser.add_argument('-c', '--config', dest='config_name', type=str, default='config.yaml')
     args = parser.parse_args()
 
-    image_size = (240, 240)
-    model_name = args.model_name
+    logger = logging.getLogger('Processing Logger')
+    logger.setLevel(logging.DEBUG)
 
-    with open('config.yaml', 'r') as config_file:
+    log_stream = logging.StreamHandler()
+    log_stream.setLevel(logging.DEBUG)
+
+    log_file = logging.FileHandler('process.log')
+    log_file.setLevel(logging.DEBUG)
+
+    formatter = logging.Formatter('%(asctime)s - %(levelname)s - %(message)s')
+    log_stream.setFormatter(formatter)
+    log_file.setFormatter(formatter)
+
+    logger.addHandler(log_stream)
+    logger.addHandler(log_file)
+
+    logger.info('-' * 100)
+
+    image_size = (240, 240)
+
+    with open(args.config_name, 'r') as config_file:
         config = yaml.load(config_file, Loader=yaml.FullLoader)
 
-    net = load_net(len(config['allow']['train']), model_name)
+    net = load_net(len(config['train']), args.model_name)
 
-    model = run(net, config['allow']['train'], train_test_split=0.75, patience=7, moniter='val_loss')
-    model.export('model.onnx', ((1, 3) + image_size))
+    model, history = run(net, config['train'], train_test_split=0.75, patience=7, moniter='val_loss')
+    model.export(f'model_{args.config_name.split(".")[0]}.onnx', ((1, 3) + image_size))
+
+    logger.info(f'train accuracy: {(history["accuracy"]):.3f}')
 
     total = 0
     correct = 0
 
-    for category_filter in config['allow']['test']:
-        net_copy = load_net(len(category_filter), model_name, net=copy.deepcopy(net))
+    for category_filter in config['test']:
+        net_copy = load_net(len(category_filter['class']), args.model_name, net=copy.deepcopy(net))
 
         train_test_split = {}
-        for i, category in enumerate(category_filter):
-            train_test_split[category] = [10 if i == 0 else 100, 50]
+        for i in range(len(category_filter['class'])):
+            train_test_split[category_filter['class'][i]] = category_filter['sample'][i]
 
-        y_test, y_hat = run(net_copy, category_filter, train_test_split=train_test_split, patience=4, moniter='loss', is_query=True)
+        logger.info(f'train test split: {train_test_split}')
+
+        y_test, y_hat = run(net_copy, category_filter['class'], train_test_split=train_test_split, patience=4, moniter='loss', is_query=True)
 
         total += len(y_test)
         correct += (y_test == y_hat).sum()
 
-        print(classification_report(y_test, y_hat))
+        logger.info(f'\n{classification_report(y_test, y_hat)}')
 
-    print(f'average accuracy: {(correct / total):.3f}')
+    logger.info(f'average accuracy: {(correct / total):.3f}')
+
+    logger.info('-' * 100)
