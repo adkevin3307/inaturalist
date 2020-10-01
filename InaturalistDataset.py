@@ -60,8 +60,14 @@ class InaturalistDataset(torch.utils.data.Dataset):
 
         for key, value in weights.items():
             category = self.category_map[key]
+            amount = sum(value)
 
-            temp = random.sample(list(self.label_file_df[self.label_file_df['category_id'] == category].index), k=sum(value))
+            target = list(self.label_file_df[self.label_file_df['category_id'] == category].index)
+
+            if amount > len(target):
+                amount = len(target)
+
+            temp = random.sample(list(self.label_file_df[self.label_file_df['category_id'] == category].index), k=amount)
             temp = np.random.permutation(temp)
 
             indices[0].extend(temp[: value[0]])

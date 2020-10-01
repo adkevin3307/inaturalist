@@ -1,3 +1,4 @@
+import os
 import yaml
 import copy
 import logging
@@ -165,7 +166,12 @@ if __name__ == '__main__':
     net = load_net(len(config['train']), args.model_name)
 
     model, history = run(net, config['train'], train_test_split=0.75, patience=7, moniter='val_loss')
-    model.export(f'backup/model_{args.config_name.split(".")[0]}.onnx', ((1, 3) + image_size))
+
+    if not os.path.exists('backup'):
+        os.makedirs('backup')
+
+    name, extension = os.path.splitext(os.path.basename(args.config_name))
+    model.export(os.path.join('backup', name + '.onnx'), ((1, 3) + image_size))
 
     logger.info(f'train accuracy: {(history["accuracy"]):.3f}')
 
